@@ -1,5 +1,6 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Text.RegularExpressions;
+using System.Collections.Immutable;
+
+namespace Mal;
 
 interface IMalType
 {
@@ -7,71 +8,94 @@ interface IMalType
     string ToReadableString();
 }
 
-class MalSequence : IMalType
+interface IAdditiveType : IMalType
 {
-    internal enum MalSequenceType
-    {
-        List,
-        Vector
-    }
+    IMalType Add(IMalType other);
+}
 
-    public MalSequence(IEnumerable<IMalType> items, MalSequenceType type)
-    {
-        Items = items.ToList();
-        Type = type;
-    }
+struct MalFunction : IMalType
+{
+    public MalFunction(Func<IMalType[], IMalType> function) => Function = function;
 
-    public List<IMalType> Items { get; }
-    private MalSequenceType Type { get; }
+    public readonly Func<IMalType[], IMalType> Function { get; }
 
-    private char prefix => Type switch
-    {
-        MalSequenceType.List => '(',
-        MalSequenceType.Vector => '[',
-        _ => throw new System.NotImplementedException()
-    };
+    public override string ToString() => $"<function>@{GetHashCode()}";
+    public string ToReadableString() => ToString();
+}
 
-    private char suffix => Type switch
-    {
-        MalSequenceType.List => ')',
-        MalSequenceType.Vector => ']',
-        _ => throw new System.NotImplementedException()
-    };
+interface IMalSequence : IMalType
+{
+    IReadOnlyList<IMalType> Items { get; }
+}
 
-    public override string ToString() => $"{prefix}{string.Join(" ", Items)}{suffix}";
-    public string ToReadableString() => $"{prefix}{string.Join(" ", Items.Select(e => e.ToReadableString()))}{suffix}";
+struct MalList : IMalSequence
+{
+    private const char PREFIX = '(';
+    private const char SUFFIX = ')';
+
+    public MalList(IImmutableList<IMalType> items) => Items = items;
+
+    public IReadOnlyList<IMalType> Items { get; }
+
+    public override string ToString() => $"{PREFIX}{string.Join(" ", Items)}{SUFFIX}";
+    public string ToReadableString() => $"{PREFIX}{string.Join(" ", Items.Select(e => e.ToReadableString()))}{SUFFIX}";
+}
+
+struct MalVector : IMalSequence
+{
+    private const char PREFIX = '[';
+    private const char SUFFIX = ']';
+
+    public MalVector(IImmutableList<IMalType> items) => Items = items;
+
+    public IReadOnlyList<IMalType> Items { get; }
+
+    public override string ToString() => $"{PREFIX}{string.Join(" ", Items)}{SUFFIX}";
+    public string ToReadableString() => $"{PREFIX}{string.Join(" ", Items.Select(e => e.ToReadableString()))}{SUFFIX}";
 }
 
 class MalHashMap : IMalType
 {
-    public MalHashMap(IDictionary<IMalType, IMalType> items) => Items = items;
+    public MalHashMap(IImmutableDictionary<IMalType, IMalType> items) => Items = items;
 
-    public IDictionary<IMalType, IMalType> Items { get; }
+    public IReadOnlyDictionary<IMalType, IMalType> Items { get; }
 
     public override string ToString() => $"{{{string.Join(" ", Items.Select(e => $"{e.Key} {e.Value}"))}}}";
     public string ToReadableString() => $"{{{string.Join(" ", Items.Select(e => $"{e.Key.ToReadableString()} {e.Value.ToReadableString()}"))}}}";
 }
 
-interface IMalScalarType : IMalType { }
-
-struct MalScalarType<T> : IMalScalarType
-    where T : struct
+interface IMalScalarType<T> : IMalType
 {
-    public MalScalarType(T value) => Value = value;
+    T Value { get; }
+}
 
-    public T Value { get; }
+struct MalInteger : IMalScalarType<int>
+{
+    public MalInteger(int value) => Value = value;
+
+    public int Value { get;}
 
     override public string ToString() => Value.ToString()!.ToLower();
     public string ToReadableString() => ToString();
 }
 
-struct MalNil : IMalScalarType
+struct MalBoolean : IMalScalarType<bool>
+{
+    public MalBoolean(bool value) => Value = value;
+
+    public bool Value { get; }
+
+    override public string ToString() => Value.ToString()!.ToLower();
+    public string ToReadableString() => ToString();
+}
+
+struct MalNil : IMalType
 {
     override public string ToString() => "nil";
     public string ToReadableString() => ToString();
 }
 
-class MalString : IMalScalarType
+class MalString : IMalScalarType<string>
 {
     public MalString(string value, string readableValue)
     {
@@ -86,7 +110,7 @@ class MalString : IMalScalarType
     public string ToReadableString() => ReadableValue;
 }
 
-class MalKeywordType : IMalScalarType
+class MalKeywordType : IMalType
 {
     public MalKeywordType(string name) => Name = name;
 
@@ -96,11 +120,11 @@ class MalKeywordType : IMalScalarType
     public string ToReadableString() => ToString();
 }
 
-class MalSymbol : IMalScalarType
+record MalSymbol : IMalType, IEquatable<MalSymbol>
 {
     public MalSymbol(string name) => Name = name;
 
-    public string Name { get; }
+    public string Name { get; init;}
 
     override public string ToString() => Name;
     public string ToReadableString() => ToString();

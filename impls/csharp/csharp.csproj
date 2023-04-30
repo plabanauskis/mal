@@ -20,8 +20,10 @@
     <Compile Include="**/*.cs" />
   </ItemGroup>
 
+
   <ItemGroup>
     <PackageReference Include="ReadLine" Version="2.0.1" />
+    <PackageReference Include="System.Collections.Immutable" Version="7.0.0" />
   </ItemGroup>
 
 </Project>

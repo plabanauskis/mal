@@ -1,3 +1,5 @@
+namespace Mal;
+
 internal class Printer
 {
     public static string? pr_str(IMalType? type, bool print_readably) =>

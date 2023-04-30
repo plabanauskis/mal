@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -33,8 +34,8 @@ internal class Reader
     private static IMalType? read_form(Reader reader) =>
         reader.peek()?.Value switch
         {
-            "(" => read_sequence(reader, MalSequence.MalSequenceType.List),
-            "[" => read_sequence(reader, MalSequence.MalSequenceType.Vector),
+            "(" => read_sequence(reader),
+            "[" => read_sequence(reader),
             "{" => read_hash_map(reader),
             "'" => read_quote(reader, "quote"),
             "`" => read_quote(reader, "quasiquote"),
@@ -42,67 +43,81 @@ internal class Reader
             "~@" => read_quote(reader, "splice-unquote"),
             "@" => read_deref(reader),
             "^" => read_meta(reader),
-            var form when form.StartsWith(";") => null,
+            var form when form!.StartsWith(";") => null,
             _ => read_atom(reader)
         };
 
-    private static MalSequence? read_quote(Reader reader, string type)
+    private static IMalSequence? read_quote(Reader reader, string type)
     {
         reader.next(); // consume "'"
 
-        if (reader.peek() == null)
+        var form = read_form(reader);
+
+        if (form == null)
         {
             throw new ReaderException("unbalanced");
         }
 
-        var form = read_form(reader);
-
-        var list = new List<IMalType> { new MalSymbol(type), form};
-        return new MalSequence(list, MalSequence.MalSequenceType.List);
+        var list = ImmutableList.Create(new MalSymbol(type), form);
+        return new MalList(list);
     }
 
-    private static MalSequence? read_deref(Reader reader)
+    private static IMalSequence? read_deref(Reader reader)
     {
         reader.next(); // consume "@"
 
-        if (reader.peek() == null)
-        {
-            throw new ReaderException("unbalanced");
-        }
-
         var form = read_form(reader);
 
-        var list = new List<IMalType> { new MalSymbol("deref"), form};
-        return new MalSequence(list, MalSequence.MalSequenceType.List);
-    }
-
-    private static MalSequence? read_meta(Reader reader)
-    {
-        reader.next(); // consume "^"
-
-        if (reader.peek() == null)
+        if (form == null)
         {
             throw new ReaderException("unbalanced");
         }
+
+        var list = ImmutableList.Create(new MalSymbol("deref"), form);
+        return new MalList(list);
+    }
+
+    private static IMalSequence? read_meta(Reader reader)
+    {
+        reader.next(); // consume "^"
 
         var metadataForm = read_form(reader);
         var form = read_form(reader);
 
-        var list = new List<IMalType> { new MalSymbol("with-meta"), form, metadataForm };
-        return new MalSequence(list, MalSequence.MalSequenceType.List);
+        if (metadataForm == null || form == null)
+        {
+            throw new ReaderException("unbalanced");
+        }
+
+        var list = ImmutableList.Create(new MalSymbol("with-meta"), form, metadataForm);
+        return new MalList(list);
     }
 
-    private static MalSequence? read_sequence(Reader reader, MalSequence.MalSequenceType type)
+    private enum MalSequenceType
     {
-        var list = new List<IMalType>();
-        reader.next(); // consume '(' or '['
-        while (reader.peek() != null && reader.peek()?.Value !=
-            type switch
-            {
-                MalSequence.MalSequenceType.List => ")",
-                MalSequence.MalSequenceType.Vector => "]",
-                _ => throw new NotImplementedException()
-            })
+        List,
+        Vector
+    }
+
+    private static IMalSequence? read_sequence(Reader reader)
+    {
+        var list = ImmutableList.Create<IMalType>();
+        
+        var type = reader.next()!.Value switch // consume '(' or '['
+        {
+            "(" => MalSequenceType.List,
+            "[" => MalSequenceType.Vector,
+            _ => throw new NotImplementedException()
+        };
+
+        var suffix = type switch
+        {
+            MalSequenceType.List => ")",
+            MalSequenceType.Vector => "]",
+            _ => throw new NotImplementedException()
+        };
+
+        while (reader.peek() != null && reader.peek()?.Value != suffix)
         {
             var form = read_form(reader);
             
@@ -111,28 +126,27 @@ internal class Reader
                 return null;
             }
 
-            list.Add(form);
+            list = list.Add(form);
         }
 
-        if (reader.peek()?.Value !=
-            type switch
-            {
-                MalSequence.MalSequenceType.List => ")",
-                MalSequence.MalSequenceType.Vector => "]",
-                _ => throw new NotImplementedException()
-            })
+        if (reader.peek()?.Value != suffix)
         {
             throw new ReaderException("unbalanced");
         }
 
         reader.next(); // consume ')' or ']'
 
-        return new MalSequence(list, type);
+        return type switch
+        {
+            MalSequenceType.List => new MalList(list),
+            MalSequenceType.Vector => new MalVector(list),
+            _ => throw new NotImplementedException()
+        };
     }
 
     private static MalHashMap read_hash_map(Reader reader)
     {
-        var dict = new Dictionary<IMalType, IMalType>();
+        var dict = ImmutableDictionary.Create<IMalType, IMalType>();
         reader.next(); // consume '{'
 
         while (reader.peek() != null && reader.peek()?.Value != "}")
@@ -144,14 +158,19 @@ internal class Reader
                 throw new ReaderException("unbalanced");
             }
 
-            if (reader.peek() == null || reader.peek().Value == "}")
+            if (reader.peek() == null || reader.peek()!.Value == "}")
             {
                 throw new ReaderException("unbalanced");
             }
 
             var value = read_form(reader);
 
-            dict.Add(key, value);
+            if (value == null)
+            {
+                throw new ReaderException("unbalanced");
+            }
+
+            dict = dict.Add(key, value);
         }
 
         reader.next(); // consume '}'
@@ -216,18 +235,18 @@ internal class Reader
         throw new ReaderException("unbalanced");
     }
 
-    private static IMalScalarType? read_atom(Reader reader)
+    private static IMalType? read_atom(Reader reader)
     {
         var token = reader.next();
         if (int.TryParse(token!.Value, out var intValue))
         {
-            return new MalScalarType<int>(intValue);
+            return new MalInteger(intValue);
         }
 
         return token.Value switch
         {
-            "true" => new MalScalarType<bool>(true),
-            "false" => new MalScalarType<bool>(false),
+            "true" => new MalBoolean(true),
+            "false" => new MalBoolean(false),
             "nil" => new MalNil(),
             (var s) when s.StartsWith('"') => ReadString(s),
             (var s) when s.StartsWith(':') => new MalKeywordType(s),
