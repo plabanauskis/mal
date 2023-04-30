@@ -72,14 +72,14 @@ class step2_eval
                 return list;
             }
 
-            var function = EVAL(list.Items[0], env);
+            var evaluatedList = (MalList)eval_ast(list, env);
 
-            if (function == null)
+            if (evaluatedList.Items[0] is not MalFunction function)
             {
-                throw new EvaluationException("Cannot evaluate null");
+                throw new EvaluationException("First list item must be a function");
             }
 
-            return ((MalFunction)function).Function(list.Items.Skip(1).Select(i => EVAL(i, env)).ToArray());
+            return function.Function(evaluatedList.Items.Skip(1).ToArray());
         }
         catch (EvaluationException e)
         {
